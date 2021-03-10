@@ -93,25 +93,158 @@ class Bottleneck(nn.Module):
         return out
 
 class ResNet(nn.Module):
+    # 构建网络最主要的事重建 __init__ 和 forward
 
     def __init__(self, block, layers, zero_init_residual = False):
         super(ResNet, self).__init__()
-        self.inplace = 64
+        self.inplace = 64 # 基准通道数
         self.conv1 = nn.Conv2d(3, 64, kernel_size= = 7, stride = 2, padding = 3, bias = False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace = True)
-        self.maxpool = nn.MaxPool2d(kernel_size = 3, stride = 2, padding =3)
+        self.maxpool = nn.MaxPool2d(kernel_size = 3, stride = 2, padding =1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
 
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, nn.Conv2d): #权值初始化
                 nn.init.kaiming_normal_(m.weight, mode = 'fan_out', nonlinearity = 'relu')
-            elif isinstance(m, nn.BatchNorm2d):
+            elif isinstance(m, nn.BatchNorm2d): #权值初始化
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
+
+        # Zero-initialize the last BN in each residual branch,
+        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
+        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
+
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck):
+                    nn.init.constant_(m.weight, 1)
+                elif isinstance(m, nn.BatchNorm2d):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+
+    def _make_layer(self, block, planes, blocks, stride = 1):
+        """
+        Args:
+            block: Basicblock 或者 Bottleneck
+            palnes: 基准通道数
+            blocks: Basicblock 或者 Bottleneck 的数目
+
+        """
+        downsample = None
+
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                conv1x1(self.inplace, planes * block.expansion, stride),
+                nn.BatchNorm2d(planes * block.expansion)
+            )
+
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplace = planes * block.expansion
+        for _ in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+
+        C_1 = self.conv1(x)
+        C_1 = self.bn1(C_1)
+        C_1 = self.relu(C_1)
+        C_1 = self.maxpool(C_1)
+
+        C_2 = self.layer1(C_1)
+        C_3 = self.layer2(C_2)
+        C_4 = self.layer3(C_3)
+        C_5 = self.layer4(C_4)
+
+        return C_3, C_4, C_5
+
+def resnet18(pretrained = False, hr_pretrained = False, **kwargs):
+    """
+    Constructs a ResNet-18 model.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
+    if pretrained:
+        # strict = False as we don't need fc layer params.
+        if hr_pretrained:
+            print('Loading the high resolution pretrain model...')
+            model.load_state_dict(torch.load("backbone/weights/resnet18_hr_10.pth"), strict = False)
+        else:
+            model.load_state_dict(model_zoo.load_url(model_urls['resnet18']), strict= False)
+
+    return model
+
+def resnet34(pretrained = False, **kwargs):
+    """
+    Constructs a ResNet-34 model.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
+    
+    if pretrained:
+        model.load_state_dict(model_zoo.load_url(model_urls['resnet34']), strict = False)
+        
+    return model
+
+
+def resnet50(pretrained=False, **kwargs):
+    """
+    Constructs a ResNet-50 model.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+
+    if pretrained:
+        model.load_state_dict(model_zoo.load_url(model_urls['resnet50']), strict=False)
+
+    return model
+    
+def resnet101(pretrained=False, **kwargs):
+    """
+    Constructs a ResNet-101 model.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
+
+    if pretrained:
+        model.load_state_dict(model_zoo.load_url(model_urls['resnet101']), strict=False)
+
+    return model
+
+def resnet152(pretrained=False, **kwargs):
+    """
+    Constructs a ResNet-101 model.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
+
+    if pretrained:
+        model.load_state_dict(model_zoo.load_url(model_urls['resnet152']), strict=False)
+
+    return model
+
+if __name__ == 'main':
+    print("found", torch.cuda.device_count(), "GPU(s)")
+    device = torch.device("cuda")
+    model = resnet101(detection = True).to(device)
+    print(model)
+
+    input = torch.randn(1, 3, 512, 512).to(device)
+    output = model(input)
+        
+
+
 
 
 
