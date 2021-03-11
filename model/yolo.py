@@ -137,5 +137,58 @@ class myYOLO(nn.Module):
         scores = scores[keep]
         cls_inds = cls_inds[keep]
 
+        if im_shape != None:
+            # clip
+            bbox_pred = self.clip_boxes(bbox_pred, im_shape)
+
+        return bbox_pred, scores, cls_inds
+
+    def forward(self, x, target=None):
+        # backbone
+        _, _, C_5 = self.backbone(x) # 517 * 7 * 7
+
+        # head
+        C_5 = self.SPP(C_5)
+        C_5 = self.SAM(C_5)
+        C_5 = self.conv_set(C_5)
+
+        # pred
+        prediction = self.pred(C_5)
+        prediction = prediction.view(C_5.size(0), 1 + self.num_classes + 4, -1).permute(0, 2, 1)
+        B, HW, C = prediction.size()
+
+        # Divide prediction to obj_pred, txtytwth_pred and cls_pred
+        # [B, H*W, 1]
+        conf_pred = prediction[:, :, :1]
+        # [B, H*W, num_cls]
+        cls_pred = prediction[:, :, 1: 1 + self.num_classes]
+        # [B, H*W, 4]
+        txtytwth_pred = prediction[:, :, 1 + self.num_classes:]
+
+        # test
+        if not self.trainable:
+            with torch.no_grad():
+                # batch size = 1
+                all_conf = torch.sigmoid(conf_pred)[0]  # 0 is because that these is only 1 batch.
+                all_bbox = torch.clamp((self.decode_boxes(txtytwth_pred) / self.scale_torch)[0], 0., 1.)
+                all_class = (torch.softmax(cls_pred[0, :, :], 1) * all_conf)
+
+                # separate box pred and class conf
+                all_conf = all_conf.to('cpu').numpy()
+                all_class = all_class.to('cpu').numpy()
+                all_bbox = all_bbox.to('cpu').numpy()
+
+                bboxes, scores, cls_inds = self.postprocess(all_bbox, all_class)
+
+                return bboxes, scores, cls_inds
+        else:
+            conf_loss, cls_loss, txtytwth_loss, total_loss = tools.loss(pred_conf=conf_pred, pred_cls=cls_pred,
+                                                                        pred_txtytwth=txtytwth_pred,
+                                                                        label=target)
+
+            return conf_loss, cls_loss, txtytwth_loss, total_loss
+
+        
+
 
 
